@@ -15,7 +15,7 @@ if 'history' not in st.session_state:
     st.session_state.history = []
 
 # Interaktive Quadrantenaufteilung wählbar
-vis_division = st.sidebar.slider("Visualisierte Teilung (z. B. 4 = 4x4)", min_value=2, max_value=10, value=4, step=1)
+vis_division = st.sidebar.slider("Visualisierte Teilung (z. B. 4 = 4x4)", min_value=2, max_value=100, value=4, step=1)
 
 
 def calculate_ui(image, max_division=6, vis_div=4):

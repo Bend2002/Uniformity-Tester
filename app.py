@@ -58,24 +58,25 @@ def calculate_ui(image, max_division=6, vis_div=4):
     if not chi_values:
         return 0.0, [], None, None, 0.0
 
-    n_values = np.arange(2, 2 + len(chi_values))
+     n_values = np.arange(2, 2 + len(chi_values))
     df_values = n_values - 1
     chi_crit_vals = chi2.ppf(0.0275, df_values)
     a0 = np.trapz(chi_crit_vals, x=n_values)
     A = np.trapz(chi_values, x=n_values)
     UI = (1 / (1 + (A / a0))) * 100
-    return UI, chi_values, quadrant_overlay, heatmap_data, a0
 
-
-def plot_chi_curve(chi_curve):
+    # Plot Chi-Square Curve
     fig, ax = plt.subplots()
-    ax.plot(range(2, 2 + len(chi_curve)), chi_curve, marker='o')
-    ax.set_title("Chi²-Kurve über Quadrantenanzahl")
-    ax.set_xlabel("Teilung (z.\u202fB. 2x2, 3x3 ...)")
-    ax.set_ylabel("Chi²-Wert")
-    ax.grid(True)
+    ax.plot(n_values, chi_values, label='Sample Curve', marker='o')
+    ax.plot(n_values, chi_crit_vals, label='Critical χ² (a0)', linestyle='--')
+    ax.fill_between(n_values, chi_crit_vals, alpha=0.2, color='gray', label='Area a0')
+    ax.set_title("Chi²-Kurve und Referenzfläche a₀")
+    ax.set_xlabel("Teilung n")
+    ax.set_ylabel("Chi²")
+    ax.legend()
     st.pyplot(fig)
 
+    return UI, chi_values, quadrant_overlay, heatmap_data, a0
 
 def display_image(img_array):
     st.image(img_array, caption="Hochgeladenes Bild", use_container_width=True)

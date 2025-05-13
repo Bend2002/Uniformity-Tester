@@ -16,8 +16,7 @@ if 'history' not in st.session_state:
     st.session_state.history = []
 
 # Interaktive Quadrantenaufteilung wählbar
-vis_division = st.sidebar.slider("Visualisierte Teilung (z.\u202fB. 4 = 4x4)", min_value=2, max_value=100, value=4, step=1)
-
+vis_division = st.sidebar.slider("Visualisierte Teilung (z. B. 4 = 4x4)", min_value=2, max_value=100, value=4, step=1)
 
 def calculate_ui(image, max_division=6, vis_div=4):
     h, w = image.shape
@@ -58,7 +57,6 @@ def calculate_ui(image, max_division=6, vis_div=4):
     if not chi_values:
         return 0.0, [], None, None, 0.0
 
-
     n_values = np.arange(2, 2 + len(chi_values))
     df_values = n_values - 1
     chi_crit_vals_975 = chi2.ppf(0.975, df_values)
@@ -80,9 +78,18 @@ def calculate_ui(image, max_division=6, vis_div=4):
     ax.set_ylabel("Chi-square Value")
     ax.legend()
     st.pyplot(fig)
-  
-    return UI, chi_values, quadrant_overlay, heatmap_data, a0
 
+    # Zeige Berechnungsformeln und Werte an
+    st.markdown("### 📐 Formelübersicht")
+    st.latex(r"I = \frac{\text{Var}(X)}{\text{E}(X)}")
+    st.latex(r"\chi^2 = I \cdot (n - 1)")
+    st.latex(r"A = \int_0^{n} \chi^2\,dn")
+    st.latex(r"\text{UI} = \frac{1}{1 + \frac{A}{a_0}} \cdot 100")
+    st.markdown(f"**A (Fläche unter Sample-χ²-Kurve):** {A:.2f}")
+    st.markdown(f"**a₀ (Referenzfläche, χ²₀.₀₂₇₅):** {a0:.2f}")
+    st.markdown(f"**Uniformity Index (UI):** {UI:.2f} %")
+
+    return UI, chi_values, quadrant_overlay, heatmap_data, a0
 def display_image(img_array):
     st.image(img_array, caption="Hochgeladenes Bild", use_container_width=True)
 

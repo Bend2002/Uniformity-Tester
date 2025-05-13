@@ -58,24 +58,29 @@ def calculate_ui(image, max_division=6, vis_div=4):
     if not chi_values:
         return 0.0, [], None, None, 0.0
 
-     n_values = np.arange(2, 2 + len(chi_values))
+
+    n_values = np.arange(2, 2 + len(chi_values))
     df_values = n_values - 1
-    chi_crit_vals = chi2.ppf(0.0275, df_values)
-    a0 = np.trapz(chi_crit_vals, x=n_values)
+    chi_crit_vals_975 = chi2.ppf(0.975, df_values)
+    chi_crit_vals_025 = chi2.ppf(0.025, df_values)
+    chi_crit_vals_a0 = chi2.ppf(0.0275, df_values)
+
+    a0 = np.trapz(chi_crit_vals_a0, x=n_values)
     A = np.trapz(chi_values, x=n_values)
     UI = (1 / (1 + (A / a0))) * 100
 
-    # Plot Chi-Square Curve
+    # Plot Chi-Square Curve with Reference Bounds
     fig, ax = plt.subplots()
-    ax.plot(n_values, chi_values, label='Sample Curve', marker='o')
-    ax.plot(n_values, chi_crit_vals, label='Critical χ² (a0)', linestyle='--')
-    ax.fill_between(n_values, chi_crit_vals, alpha=0.2, color='gray', label='Area a0')
-    ax.set_title("Chi²-Kurve und Referenzfläche a₀")
-    ax.set_xlabel("Teilung n")
-    ax.set_ylabel("Chi²")
+    ax.plot(n_values, chi_values, label='Sample χ²', marker='o')
+    ax.plot(n_values, chi_crit_vals_025, linestyle='--', color='red', label='χ²₀.₀₂₅')
+    ax.plot(n_values, chi_crit_vals_975, linestyle='--', color='blue', label='χ²₀.₉₇₅')
+    ax.fill_between(n_values, chi_crit_vals_025, chi_crit_vals_975, color='gray', alpha=0.3, label='Random Region')
+    ax.set_title("Chi-square vs. Degrees of Freedom")
+    ax.set_xlabel("Degrees of Freedom (n-1)")
+    ax.set_ylabel("Chi-square Value")
     ax.legend()
     st.pyplot(fig)
-
+  
     return UI, chi_values, quadrant_overlay, heatmap_data, a0
 
 def display_image(img_array):

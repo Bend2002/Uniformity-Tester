@@ -7,6 +7,7 @@ from io import BytesIO
 from PIL import Image
 import base64
 from streamlit_drawable_canvas import st_canvas
+from scipy.stats import chi2
 
 st.set_page_config(page_title="Uniformity Index Analyzer", layout="centered")
 st.title("📷 Uniformity Index Analyzer")
@@ -57,10 +58,13 @@ def calculate_ui(image, max_division=6, vis_div=4):
     if not chi_values:
         return 0.0, [], None, None
 
-    A = np.trapz(chi_values)
-    a0 = 10
+        n_values = np.arange(2, 2 + len(chi_values))
+    df_values = n_values - 1
+    chi_crit_vals = chi2.ppf(0.0275, df_values)
+    a0 = np.trapz(chi_crit_vals, x=n_values)
+    A = np.trapz(chi_values, x=n_values)
     UI = (1 / (1 + (A / a0))) * 100
-    return UI, chi_values, quadrant_overlay, heatmap_data
+    return UI, chi_values, quadrant_overlay, heatmap_data, a0
 
 
 def plot_chi_curve(chi_curve):
@@ -161,9 +165,10 @@ if st.session_state.get("cropping_done"):
     image_color = st.session_state.image_color
     image_gray = st.session_state.image_gray
 
-    UI, chi_curve, quadrant_overlay, heatmap_data = calculate_ui(image_gray, max_division=vis_division, vis_div=vis_division)
+    UI, chi_curve, quadrant_overlay, heatmap_data, a0 = calculate_ui(image_gray, max_division=vis_division, vis_div=vis_division)
 
     st.markdown(f"### 📊 Uniformity Index: **{UI:.2f} %**")
+st.markdown(f"Referenzfläche a₀ (Chi²-Grenze bei p=0.0275): **{a0:.4f}**")
 
     # Histogramm anzeigen
     fig_hist, ax_hist = plt.subplots()
@@ -220,3 +225,6 @@ if st.session_state.history:
             st.image(Image.open(BytesIO(base64.b64decode(entry['hist']))), use_column_width=True)
             st.markdown("**Heatmap der Blockmittelwerte:**")
             st.image(Image.open(BytesIO(base64.b64decode(entry['heat']))), use_column_width=True)
+
+
+

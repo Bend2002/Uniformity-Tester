@@ -16,7 +16,7 @@ if 'history' not in st.session_state:
     st.session_state.history = []
 
 # Interaktive Quadrantenaufteilung wählbar
-vis_division = st.sidebar.slider("Visualisierte Teilung (z. B. 4 = 4x4)", min_value=2, max_value=100, value=4, step=1)
+vis_division = st.sidebar.slider("Visualisierte Teilung (z.\u202fB. 4 = 4x4)", min_value=2, max_value=100, value=4, step=1)
 
 
 def calculate_ui(image, max_division=6, vis_div=4):
@@ -56,9 +56,9 @@ def calculate_ui(image, max_division=6, vis_div=4):
             heatmap_data[y, x] = np.mean(block)
 
     if not chi_values:
-        return 0.0, [], None, None
+        return 0.0, [], None, None, 0.0
 
-        n_values = np.arange(2, 2 + len(chi_values))
+    n_values = np.arange(2, 2 + len(chi_values))
     df_values = n_values - 1
     chi_crit_vals = chi2.ppf(0.0275, df_values)
     a0 = np.trapz(chi_crit_vals, x=n_values)
@@ -71,7 +71,7 @@ def plot_chi_curve(chi_curve):
     fig, ax = plt.subplots()
     ax.plot(range(2, 2 + len(chi_curve)), chi_curve, marker='o')
     ax.set_title("Chi²-Kurve über Quadrantenanzahl")
-    ax.set_xlabel("Teilung (z. B. 2x2, 3x3 ...)")
+    ax.set_xlabel("Teilung (z.\u202fB. 2x2, 3x3 ...)")
     ax.set_ylabel("Chi²-Wert")
     ax.grid(True)
     st.pyplot(fig)
@@ -121,7 +121,7 @@ if uploaded_file and use_crop and not st.session_state.get("cropping_done"):
         x1, x2 = left, left + width
         y1, y2 = top, top + height
 
-        st.markdown(f"🟦 Ausgewählter Bereich: X={x1}-{x2}, Y={y1}-{y2}")
+        st.markdown(f"🕦 Ausgewählter Bereich: X={x1}-{x2}, Y={y1}-{y2}")
         preview_image = original_color.copy()
         cv2.rectangle(preview_image, (x1, y1), (x2, y2), (0, 0, 255), 2)
         st.image(preview_image, caption="Vorschau des gewählten Bereichs", channels="BGR")
@@ -168,7 +168,7 @@ if st.session_state.get("cropping_done"):
     UI, chi_curve, quadrant_overlay, heatmap_data, a0 = calculate_ui(image_gray, max_division=vis_division, vis_div=vis_division)
 
     st.markdown(f"### 📊 Uniformity Index: **{UI:.2f} %**")
-st.markdown(f"Referenzfläche a₀ (Chi²-Grenze bei p=0.0275): **{a0:.4f}**")
+    st.markdown(f"Referenzfläche a₀ (Chi²-Grenze bei p=0.0275): **{a0:.4f}**")
 
     # Histogramm anzeigen
     fig_hist, ax_hist = plt.subplots()
@@ -225,6 +225,3 @@ if st.session_state.history:
             st.image(Image.open(BytesIO(base64.b64decode(entry['hist']))), use_column_width=True)
             st.markdown("**Heatmap der Blockmittelwerte:**")
             st.image(Image.open(BytesIO(base64.b64decode(entry['heat']))), use_column_width=True)
-
-
-

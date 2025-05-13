@@ -203,7 +203,7 @@ if st.session_state.get("cropping_done"):
     display_image(cv2.cvtColor(image_color, cv2.COLOR_BGR2RGB))
     if quadrant_overlay is not None:
         st.image(quadrant_overlay, caption=f"Visualisierung der Quadranten ({vis_division}x{vis_division})", channels="RGB")
-    plot_chi_curve(chi_curve)
+
 
     # Speichere Verlaufseintrag
     buffered = BytesIO()

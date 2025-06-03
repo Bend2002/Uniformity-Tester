@@ -1,78 +1,189 @@
-import streamlit as st
-import cv2
-import numpy as np
-import matplotlib.pyplot as plt
-import tempfile
 from io import BytesIO
-from PIL import Image
 import base64
-from streamlit_drawable_canvas import st_canvas
-from scipy.stats import chi2
+from typing import Iterable
 
-st.set_page_config(page_title="Uniformity Index Analyzer", layout="centered")
+import numpy as np
+import numpy.typing as npt
+from scipy.stats import chi2
+import cv2
+import matplotlib.pyplot as plt
+from PIL import Image
+import streamlit as st
+from streamlit_drawable_canvas import st_canvas
+
+# General Information
+__author__ = "Bendix Brüggenjürgen"
+__copyright__ = "Copyright 2025, Institut für Textiltechnik der RWTH Aachen University"
+__credits__ = ["Bendix Brüggenjürgen"]
+__version__ = "0.2"
+__maintainer__ = "Bendix Brüggenjürgen"
+__email__ = "bendix.brueggenjuergen@rwth-aachen.de"
+__status__ = "In Development"
+
+# Seiteneinrichtung
+st.set_page_config(page_title="Uniformity Index Analyzer", layout="centered", initial_sidebar_state="expanded")
 st.title("📷 Uniformity Index Analyzer")
 
 if 'history' not in st.session_state:
     st.session_state.history = []
 
-# Interaktive Quadrantenaufteilung wählbar
-vis_division = st.sidebar.slider("Visualisierte Teilung (z. B. 4 = 4x4)", min_value=2, max_value=100, value=4, step=1)
+# Sidebar
+st.sidebar.header("Einstellungen")
+vis_division = st.sidebar.slider("Visualisierte Teilung (z. B. 4 = 4x4)", min_value=2, max_value=70, value=4, step=1)
 
-def calculate_ui(image, max_division=6, vis_div=4):
-    h, w = image.shape
-    chi_values = []
-    quadrant_overlay = image.copy()
-    quadrant_overlay = cv2.cvtColor(quadrant_overlay, cv2.COLOR_GRAY2RGB)
-    heatmap_data = np.zeros((vis_div, vis_div))
 
-    for i in range(2, max_division + 1):
-        n = i * i
-        block_h, block_w = h // i, w // i
-        if block_h == 0 or block_w == 0:
-            continue
-        means = []
-        for y in range(i):
-            for x in range(i):
-                block = image[y*block_h:(y+1)*block_h, x*block_w:(x+1)*block_w]
-                if block.size > 0:
-                    means.append(np.mean(block))
-        means = np.array(means)
-        mean_val = np.mean(means)
-        var_val = np.var(means)
-        I = var_val / mean_val if mean_val != 0 else 0
-        chi = I * (n - 1)
-        chi_values.append(chi)
+############# math functions ##################################################
+def _calculate_chi_values(sums_blocks: list[float]) -> float:
+    """
+    sums_blocks: 1D array of block‑sums.  Each entry must already be an integer “count”
+                 (e.g. a Poisson‑distributed photon‑count).
+    Returns the standard Poisson dispersion index:
+       D = sum((x_i - x̄)^2) / x̄   which equals (n-1) * (sample_var / sample_mean),
+       and under H0≈Poisson it ≃ χ²_{n-1}.
+    """
+    arr = np.array(sums_blocks, dtype=float)
+    n = arr.size
+    mean_val = np.mean(arr)
+    if mean_val == 0:
+        return 0.0
+    # use ddof=1 to get the unbiased sample variance s²:
+    var_val = np.var(arr, ddof=1)   # s² = (1/(n-1)) Σ (x_i - x̄)²
+    # I = s² / x̄  →  χ² = (n-1)*I = Σ(x_i - x̄)² / x̄
+    I   = var_val / mean_val
+    chi = I * (n - 1)
+    return chi
+
+
+def _block_sums(image: np.ndarray, n_blocks: int) -> np.ndarray:
+    """
+    Crop the grayscale image (output of cv2.cvtColor(image_color, cv2.COLOR_BGR2GRAY))
+    so that its height/width is an integer multiple of n_blocks,
+    then reshape into (n_blocks, block_h, n_blocks, block_w), and SUM over each block.
+    The *only* reason to SUM is if 'image' is already a true Poisson‑count array
+    (per‑pixel counts).  If 'image' is 8‑bit gray levels, this sum will be O(10^4…10^5)
+    per block and break the Var=Mean assumption.
+    """
+    h, w = image.shape[:2]
+    block_h = h // n_blocks
+    block_w = w // n_blocks
+
+    if block_h == 0 or block_w == 0:
+        raise ValueError(f"Cannot split {h}×{w} image into {n_blocks}×{n_blocks} blocks.")
+
+    cropped = image[: block_h * n_blocks, : block_w * n_blocks]
+
+    if cropped.ndim == 2:
+        # reshape into (n_blocks, block_h, n_blocks, block_w)
+        blocks = cropped.reshape(n_blocks, block_h, n_blocks, block_w)
+        # sum over rows_in_block (axis=1) and cols_in_block (axis=3)
+        # → shape (n_blocks, n_blocks) of block‑sums
+        return blocks.mean(axis=(1, 3))
+    else:
+        raise ValueError("Image must be a 2D grayscale array from cv2.cvtColor.")
+
+
+def _calculate_uniformity_index_range(
+    chi_values: list[float],
+    max_division: int
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, float, float]:
+    """
+    chi_values: list of observed χ² statistics for subdivisions i=2..max_division.
+                chi_values[k] corresponds to i = k+2  (i.e. 2×2, 3×3, …, max_division×max_division).
+    max_division: largest i for which you computed a χ².
+
+    Returns:
+      UI                 : Uniformity Index (float, percent)
+      dof                : array([i^2 - 1  for i=2..max_division])
+      chi_crit_vals_a0   : χ²_{0.0275, dof}       for each df
+      chi_crit_vals_025  : χ²_{0.025,  dof}       for each df
+      chi_crit_vals_975  : χ²_{0.975,  dof}       for each df
+      A                  : ∫ [observed χ²(i)  vs n=i²]  d(n)
+      a0                 : ∫ [χ²_{0.0275, df(i)} vs n=i²] d(n)
+    """
+    # 1) i ranges from 2..max_division
+    i_vals = np.arange(2, max_division + 1)
+
+    # 2) total block‑count n_i = i^2
+    n_vals = i_vals**2
+
+    # 3) degrees of freedom at level i is df_i = n_i - 1 = i^2 - 1
+    dof = n_vals - 1
+
+    # 4) convert chi_values to array and check its length
+    D = np.array(chi_values, dtype=float)
+    if D.shape[0] != i_vals.shape[0]:
+        raise ValueError(
+            f"chi_values must have length {max_division - 1} (for i=2..{max_division}), "
+            f"but got length {len(chi_values)}."
+        )
+
+    # 5) compute the lower‑tail 2.75% cutoff, plus 2.5%/97.5% if desired
+    chi_crit_vals_a0  = chi2.ppf(0.0275, dof)
+    chi_crit_vals_025 = chi2.ppf(0.025,  dof)
+    chi_crit_vals_975 = chi2.ppf(0.975,  dof)
+
+    # 6) now integrate *vs n = i²* using np.trapezoid
+    #    A  = ∫ D(i)         d(n_i)
+    #    a0 = ∫ χ²_{0.0275,dof} d(n_i)
+    A  = np.trapezoid(D,            x=n_vals)
+    a0 = np.trapezoid(chi_crit_vals_a0, x=n_vals)
+
+    # 7) Uniformity Index = 100 * [1 / (1 + A/a0)]
+    UI = 100.0 * (1.0 / (1.0 + (A / a0))) if a0 != 0 else 0.0
+
+    return UI, dof, chi_crit_vals_a0, chi_crit_vals_025, chi_crit_vals_975, A, a0
+
+
+def compute_chi_series(image: np.ndarray, max_division: int) -> list[float]:
+    """
+    Build the list [χ² for 2×2, 3×3, …, max_division×max_division].
+    Note: image must be the 2D numpy array returned by cv2.cvtColor(..., cv2.COLOR_BGR2GRAY).
+    If you pass 8‑bit gray levels, you will see huge χ² because Var≠Mean.
+    """
+    chi_values = [
+        _calculate_chi_values(_block_sums(image, n).ravel())
+        for n in range(2, max_division + 1)
+    ]
+    return chi_values
+
+############# UI functions ##################################################
+def calculate_overlay(image_overlay: Image, vis_div: int):
+    h, w = image_overlay.shape[:2]
+    block_height, block_width = h // vis_div, w // vis_div
+
+    quadrant_overlay = cv2.cvtColor(image_overlay, cv2.COLOR_GRAY2RGB)
+    heatmap_data = _block_sums(image_overlay, vis_div)
+
+    # --- draw the grid by drawing the horizontal and vertical lines once each ---
+    # draw horizontal grid lines
+    for i in range(1, vis_div):
+        y = i * block_height
+        cv2.line(quadrant_overlay, (0, y), (w, y), (0, 255, 0), 1)
+    # draw vertical grid lines
+    for i in range(1, vis_div):
+        x = i * block_width
+        cv2.line(quadrant_overlay, (x, 0), (x, h), (0, 255, 0), 1)
+    return heatmap_data, quadrant_overlay
+
+
+def calculate_ui(image: Image, max_division: int = 6):
+
+    chi_values = compute_chi_series(image, max_division=max_division)
 
     # Visualisierung basierend auf gewählter Teilung
-    i = vis_div
-    block_h, block_w = h // i, w // i
-    for y in range(i):
-        for x in range(i):
-            top_left = (x*block_w, y*block_h)
-            bottom_right = ((x+1)*block_w - 1, (y+1)*block_h - 1)
-            cv2.rectangle(quadrant_overlay, top_left, bottom_right, (0, 255, 0), 1)
-            block = image[y*block_h:(y+1)*block_h, x*block_w:(x+1)*block_w]
-            heatmap_data[y, x] = np.mean(block)
+    heatmap_data, quadrant_overlay = calculate_overlay(image.copy(), max_division)
 
-    if not chi_values:
-        return 0.0, [], None, None, 0.0
+    UI, dof, chi_crit_vals_a0, chi_crit_vals_025, chi_crit_vals_975, A, a0 = _calculate_uniformity_index_range(
+        chi_values, max_division
+    )
 
-    n_values = np.arange(2, 2 + len(chi_values))
-    df_values = n_values - 1
-    chi_crit_vals_975 = chi2.ppf(0.975, df_values)
-    chi_crit_vals_025 = chi2.ppf(0.025, df_values)
-    chi_crit_vals_a0 = chi2.ppf(0.0275, df_values)
-
-    a0 = np.trapz(chi_crit_vals_a0, x=n_values)
-    A = np.trapz(chi_values, x=n_values)
-    UI = (1 / (1 + (A / a0))) * 100
 
     # Plot Chi-Square Curve with Reference Bounds
     fig, ax = plt.subplots()
-    ax.plot(n_values, chi_values, label='Sample χ²', marker='o')
-    ax.plot(n_values, chi_crit_vals_025, linestyle='--', color='red', label='χ²₀.₀₂₅')
-    ax.plot(n_values, chi_crit_vals_975, linestyle='--', color='blue', label='χ²₀.₉₇₅')
-    ax.fill_between(n_values, chi_crit_vals_025, chi_crit_vals_975, color='gray', alpha=0.3, label='Random Region')
+    ax.plot(dof, chi_values, label='Sample χ²', marker='o')
+    ax.plot(dof, chi_crit_vals_025, linestyle='--', color='red', label='χ²₀.₀₂₅')
+    ax.plot(dof, chi_crit_vals_975, linestyle='--', color='blue', label='χ²₀.₉₇₅')
+    ax.fill_between(dof, chi_crit_vals_025, chi_crit_vals_975, color='gray', alpha=0.3, label='Random Region')
     ax.set_title("Chi-square vs. Degrees of Freedom")
     ax.set_xlabel("Degrees of Freedom (n-1)")
     ax.set_ylabel("Chi-square Value")
@@ -90,6 +201,8 @@ def calculate_ui(image, max_division=6, vis_div=4):
     st.markdown(f"**Uniformity Index (UI):** {UI:.2f} %")
 
     return UI, chi_values, quadrant_overlay, heatmap_data, a0
+
+
 def display_image(img_array):
     st.image(img_array, caption="Hochgeladenes Bild", use_container_width=True)
 
@@ -137,7 +250,7 @@ if uploaded_file and use_crop and not st.session_state.get("cropping_done"):
         st.markdown(f"🕦 Ausgewählter Bereich: X={x1}-{x2}, Y={y1}-{y2}")
         preview_image = original_color.copy()
         cv2.rectangle(preview_image, (x1, y1), (x2, y2), (0, 0, 255), 2)
-        st.image(preview_image, caption="Vorschau des gewählten Bereichs", channels="BGR")
+        st.image(preview_image[y1:y2, x1:x2], caption="Vorschau des gewählten Bereichs", channels="BGR")
 
         if st.button("Ausschnitt verwenden", key="use_crop_main"):
             st.session_state.cropping_done = True
@@ -178,7 +291,8 @@ if st.session_state.get("cropping_done"):
     image_color = st.session_state.image_color
     image_gray = st.session_state.image_gray
 
-    UI, chi_curve, quadrant_overlay, heatmap_data, a0 = calculate_ui(image_gray, max_division=vis_division, vis_div=vis_division)
+    UI, chi_curve, quadrant_overlay, heatmap_data, a0 = calculate_ui(np.array(image_gray, dtype=np.uint8),
+                                                                     max_division=vis_division)
 
     st.markdown(f"### 📊 Uniformity Index: **{UI:.2f} %**")
     st.markdown(f"Referenzfläche a₀ (Chi²-Grenze bei p=0.0275): **{a0:.4f}**")
@@ -235,6 +349,6 @@ if st.session_state.history:
             st.markdown("**Chi²-Kurve:**")
             st.line_chart(entry['chi'])
             st.markdown("**Histogramm:**")
-            st.image(Image.open(BytesIO(base64.b64decode(entry['hist']))), use_column_width=True)
+            st.image(Image.open(BytesIO(base64.b64decode(entry['hist']))), use_container_width=True)
             st.markdown("**Heatmap der Blockmittelwerte:**")
-            st.image(Image.open(BytesIO(base64.b64decode(entry['heat']))), use_column_width=True)
+            st.image(Image.open(BytesIO(base64.b64decode(entry['heat']))), use_container_width=True)
